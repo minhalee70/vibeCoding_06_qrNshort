@@ -1,351 +1,233 @@
-/**
- * URL Shortener Application Script
- * OpenAPI integration, UI state management, Clipboard copy with alert & Toast
- */
-
+// URL Shortener Logic & Interactive Pastel Theme App
 document.addEventListener('DOMContentLoaded', () => {
-  // DOM Elements
-  const shortenForm = document.getElementById('shortenForm');
+  // Elements
   const urlInput = document.getElementById('urlInput');
   const shortenBtn = document.getElementById('shortenBtn');
   const clearBtn = document.getElementById('clearBtn');
+  const shortenForm = document.getElementById('shortenForm');
   const loadingBox = document.getElementById('loadingBox');
   const resultBox = document.getElementById('resultBox');
-  const outputUrl = document.getElementById('outputUrl');
+  const shortUrlOutput = document.getElementById('shortUrlOutput');
   const copyBtn = document.getElementById('copyBtn');
-  const openLinkBtn = document.getElementById('openLinkBtn');
-  const createQrBtn = document.getElementById('createQrBtn');
-  const resetBtn = document.getElementById('resetBtn');
-  const apiBadge = document.getElementById('apiBadge');
-
-  // History DOM
-  const historyCard = document.getElementById('historyCard');
+  const copyBtnText = document.getElementById('copyBtnText');
+  const openShortUrlBtn = document.getElementById('openShortUrlBtn');
+  const historySection = document.getElementById('historySection');
   const historyList = document.getElementById('historyList');
   const clearHistoryBtn = document.getElementById('clearHistoryBtn');
 
-  // Tag Buttons
-  const tagBtns = document.querySelectorAll('.tag-btn');
-
-  // State
-  let historyData = JSON.parse(localStorage.getItem('shortened_url_history') || '[]');
-
-  // Initialize
-  init();
-
-  function init() {
-    updateButtonState();
-    renderHistory();
-    attachEventListeners();
-  }
-
-  function attachEventListeners() {
-    // Requirement 3-2: Disable button if input is empty
-    urlInput.addEventListener('input', () => {
-      updateButtonState();
-    });
-
-    // Clear input button
-    clearBtn.addEventListener('click', () => {
-      urlInput.value = '';
-      urlInput.focus();
-      updateButtonState();
-    });
-
-    // Form submit -> Requirement 3-3: Request OpenAPI URL shortener
-    shortenForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const rawUrl = urlInput.value.trim();
-
-      if (!rawUrl) return;
-
-      const formattedUrl = formatUrl(rawUrl);
-      if (!validateUrl(formattedUrl)) {
-        showToast('유효한 URL 형식이 아닙니다. (예: https://example.com)', 'error');
-        return;
-      }
-
-      await requestShortenUrl(formattedUrl);
-    });
-
-    // Requirement 3-4: Copy button -> auto copy & show alert("복사하였습니다")
-    copyBtn.addEventListener('click', () => {
-      copyToClipboard(outputUrl.value);
-    });
-
-    // Reset button
-    resetBtn.addEventListener('click', () => {
-      urlInput.value = '';
-      resultBox.style.display = 'none';
-      updateButtonState();
-      urlInput.focus();
-    });
-
-    // QR creation bridge button
-    createQrBtn.addEventListener('click', () => {
-      const targetShortUrl = outputUrl.value;
-      if (targetShortUrl) {
-        window.location.href = `../url2qr/index.html?url=${encodeURIComponent(targetShortUrl)}`;
-      }
-    });
-
-    // Sample Tag Buttons
-    tagBtns.forEach(btn => {
-      btn.addEventListener('click', () => {
-        const sampleUrl = btn.getAttribute('data-url');
-        urlInput.value = sampleUrl;
-        updateButtonState();
-        urlInput.focus();
-      });
-    });
-
-    // Clear history
-    clearHistoryBtn.addEventListener('click', () => {
-      historyData = [];
-      localStorage.removeItem('shortened_url_history');
-      renderHistory();
-      showToast('단축 내역이 삭제되었습니다.');
-    });
-  }
-
-  /**
-   * Requirement 3-2: Enable/Disable '단축하기' button based on input state
-   */
-  function updateButtonState() {
+  // Input Validation & Disabled State Management
+  function updateInputState() {
     const val = urlInput.value.trim();
     if (val.length > 0) {
       shortenBtn.disabled = false;
-      clearBtn.style.display = 'block';
+      clearBtn.style.display = 'flex';
     } else {
       shortenBtn.disabled = true;
       clearBtn.style.display = 'none';
     }
   }
 
-  /**
-   * Format URL adding protocol if missing
-   */
-  function formatUrl(url) {
-    if (!/^https?:\/\//i.test(url)) {
-      return 'https://' + url;
-    }
-    return url;
-  }
+  urlInput.addEventListener('input', updateInputState);
 
-  /**
-   * Validate URL format
-   */
-  function validateUrl(string) {
-    try {
-      const url = new URL(string);
-      return url.protocol === "http:" || url.protocol === "https:";
-    } catch (_) {
-      return false;
-    }
-  }
-
-  /**
-   * Requirement 3-3: Call OpenAPI to shorten URL with fallbacks
-   */
-  async function requestShortenUrl(targetUrl) {
-    showLoading(true);
+  clearBtn.addEventListener('click', () => {
+    urlInput.value = '';
+    updateInputState();
+    urlInput.focus();
     resultBox.style.display = 'none';
+  });
 
-    let shortUrl = null;
-    let serviceProvider = 'OpenAPI';
+  /**
+   * Reliable URL Shortener API Handler
+   * 1. Auto prepends https:// if missing
+   * 2. Uses CORS-friendly is.gd API first, falls back to TinyURL
+   * 3. Throws explicit errors if API fails without mock 404 URLs
+   */
+  async function getShortUrl(rawUrl) {
+    let formattedUrl = rawUrl.trim();
+    
+    // Auto prepend https:// if http:// or https:// is missing
+    if (!/^https?:\/\//i.test(formattedUrl)) {
+      formattedUrl = 'https://' + formattedUrl;
+    }
+
+    // Attempt 1: is.gd Free Open API (CORS friendly via Access-Control-Allow-Origin: *)
+    try {
+      const isGdApi = `https://is.gd/create.php?format=json&url=${encodeURIComponent(formattedUrl)}`;
+      const response = await fetch(isGdApi);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.shorturl) {
+          return { shortUrl: data.shorturl, originalUrl: formattedUrl };
+        } else if (data.errormessage) {
+          console.warn('is.gd error:', data.errormessage);
+        }
+      }
+    } catch (err) {
+      console.warn('is.gd fetch error, attempting TinyURL fallback...', err);
+    }
+
+    // Attempt 2: TinyURL direct endpoint
+    try {
+      const tinyUrlApi = `https://tinyurl.com/api-create.php?url=${encodeURIComponent(formattedUrl)}`;
+      const response = await fetch(tinyUrlApi);
+      if (response.ok) {
+        const text = await response.text();
+        if (text && text.startsWith('http')) {
+          return { shortUrl: text.trim(), originalUrl: formattedUrl };
+        }
+      }
+    } catch (err) {
+      console.warn('TinyURL fetch error...', err);
+    }
+
+    // Fail gracefully with explicit Exception
+    throw new Error('모든 단축 URL 생성 API 응답 실패');
+  }
+
+  // Form Submission
+  shortenForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const rawUrl = urlInput.value.trim();
+    if (!rawUrl) return;
+
+    // Show loading: Disable button & change text to "단축 중..."
+    shortenBtn.disabled = true;
+    shortenBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>단축 중...</span>`;
+    resultBox.style.display = 'none';
+    loadingBox.style.display = 'flex';
 
     try {
-      // Primary OpenAPI Attempt: is.gd API
-      try {
-        const res = await fetch(`https://is.gd/create.php?format=json&url=${encodeURIComponent(targetUrl)}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.shorturl) {
-            shortUrl = data.shorturl;
-            serviceProvider = 'is.gd OpenAPI';
-          }
-        }
-      } catch (err) {
-        console.warn('is.gd OpenAPI request failed, trying fallback 1...', err);
-      }
+      const { shortUrl, originalUrl } = await getShortUrl(rawUrl);
 
-      // Fallback 1: spoo.me OpenAPI
-      if (!shortUrl) {
-        try {
-          const res = await fetch('https://spoo.me/', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-              'Accept': 'application/json'
-            },
-            body: `url=${encodeURIComponent(targetUrl)}`
-          });
-          if (res.ok) {
-            const data = await res.json();
-            if (data.short_url) {
-              shortUrl = data.short_url;
-              serviceProvider = 'spoo.me OpenAPI';
-            }
-          }
-        } catch (err) {
-          console.warn('spoo.me OpenAPI request failed, trying fallback 2...', err);
-        }
-      }
-
-      // Fallback 2: TinyURL Public API
-      if (!shortUrl) {
-        try {
-          const res = await fetch(`https://tinyurl.com/api-create.php?url=${encodeURIComponent(targetUrl)}`);
-          if (res.ok) {
-            const text = await res.text();
-            if (text && text.startsWith('http')) {
-              shortUrl = text;
-              serviceProvider = 'TinyURL OpenAPI';
-            }
-          }
-        } catch (err) {
-          console.warn('TinyURL request failed, using hash simulator...', err);
-        }
-      }
-
-      // Fallback 3: Client-side Micro-Shortener Simulator (Ensures 100% availability)
-      if (!shortUrl) {
-        const hash = Math.random().toString(36).substring(2, 8);
-        shortUrl = `https://tiny.url/${hash}`;
-        serviceProvider = 'Shortener Engine';
-      }
-
-      // Display Result in Readonly Input
-      outputUrl.value = shortUrl;
-      openLinkBtn.href = shortUrl;
-      apiBadge.textContent = serviceProvider;
+      // Display result
+      shortUrlOutput.value = shortUrl;
+      openShortUrlBtn.href = shortUrl;
       resultBox.style.display = 'block';
 
-      // Save to History
-      saveHistory(targetUrl, shortUrl);
-
-      showToast('URL 단축이 성공적으로 진행되었습니다!');
-
+      // Save to history
+      saveToHistory(originalUrl, shortUrl);
+      renderHistory();
     } catch (error) {
-      console.error('URL Shorten Error:', error);
-      showToast('URL 단축 처리 중 오류가 발생했습니다.', 'error');
+      alert('URL 단축 생성에 실패했습니다. 올바른 주소(도메인)인지 확인하거나 잠시 후 다시 시도해 주세요.');
     } finally {
-      showLoading(false);
-    }
-  }
-
-  function showLoading(isLoading) {
-    if (isLoading) {
-      loadingBox.style.display = 'flex';
-      shortenBtn.disabled = true;
-    } else {
+      // Restore loading state and button text
       loadingBox.style.display = 'none';
-      updateButtonState();
+      shortenBtn.innerHTML = `<i class="fa-solid fa-wand-magic-sparkles"></i> <span>단축하기</span>`;
+      shortenBtn.disabled = false;
     }
-  }
+  });
 
-  /**
-   * Requirement 3-4: Copy to Clipboard + Show Alert & Toast
-   */
-  function copyToClipboard(text) {
-    if (!text) return;
+  // Copy to Clipboard (Requirement: "복사하였습니다" alert notification)
+  copyBtn.addEventListener('click', async () => {
+    const textToCopy = shortUrlOutput.value;
+    if (!textToCopy) return;
 
-    navigator.clipboard.writeText(text).then(() => {
-      // 1. Requirement 3-4 explicitly requests alert notification
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(textToCopy);
+      } else {
+        shortUrlOutput.select();
+        document.execCommand('copy');
+      }
+
+      // Visual Feedback
+      copyBtnText.textContent = '복사 완료!';
+      setTimeout(() => {
+        copyBtnText.textContent = '복사';
+      }, 2000);
+
+      // Alert Notification
       alert('복사하였습니다');
 
-      // 2. Visual Toast & Button Effect
-      showToast('클립보드에 복사되었습니다: ' + text);
-
-      copyBtn.classList.add('copied');
-      copyBtn.querySelector('span').textContent = '복사됨!';
-      setTimeout(() => {
-        copyBtn.classList.remove('copied');
-        copyBtn.querySelector('span').textContent = '복사';
-      }, 2000);
-    }).catch(err => {
-      console.error('Clipboard copy failed:', err);
-      // Fallback for older browsers
-      outputUrl.select();
+    } catch (err) {
+      shortUrlOutput.select();
       document.execCommand('copy');
       alert('복사하였습니다');
-      showToast('클립보드에 복사되었습니다');
-    });
-  }
-
-  /**
-   * Save to LocalStorage History
-   */
-  function saveHistory(original, shortened) {
-    const item = {
-      original,
-      shortened,
-      timestamp: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
-    };
-    
-    // Filter duplicates
-    historyData = historyData.filter(h => h.shortened !== shortened);
-    historyData.unshift(item);
-    
-    if (historyData.length > 5) {
-      historyData = historyData.slice(0, 5);
     }
+  });
 
-    localStorage.setItem('shortened_url_history', JSON.stringify(historyData));
-    renderHistory();
+  // Local Storage History Management
+  const STORAGE_KEY = 'smart_toolbox_short_urls';
+
+  function getHistory() {
+    try {
+      return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+    } catch (e) {
+      return [];
+    }
   }
 
-  /**
-   * Render History Items
-   */
+  function saveToHistory(original, short) {
+    let list = getHistory();
+    list = list.filter(item => item.short !== short);
+    list.unshift({ original, short, date: new Date().toLocaleDateString() });
+    if (list.length > 5) list = list.slice(0, 5);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+  }
+
   function renderHistory() {
-    if (!historyData || historyData.length === 0) {
-      historyCard.style.display = 'none';
+    const list = getHistory();
+    if (list.length === 0) {
+      historySection.style.display = 'none';
       return;
     }
 
-    historyCard.style.display = 'block';
-    historyList.innerHTML = historyData.map(item => `
+    historySection.style.display = 'block';
+    historyList.innerHTML = list.map((item) => `
       <li class="history-item">
-        <div class="history-urls">
-          <a href="${item.shortened}" target="_blank" class="history-short">${item.shortened}</a>
-          <span class="history-original" title="${item.original}">${item.original}</span>
+        <div class="history-item-left">
+          <a href="${item.short}" target="_blank" class="history-short-url">${item.short}</a>
+          <span class="history-long-url" title="${item.original}">${item.original}</span>
         </div>
-        <button type="button" class="history-copy-btn" data-url="${item.shortened}">
+        <button class="history-item-copy" onclick="copyHistoryUrl('${item.short}')">
           <i class="fa-regular fa-copy"></i> 복사
         </button>
       </li>
     `).join('');
-
-    // Attach click listeners to history copy buttons
-    document.querySelectorAll('.history-copy-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        const copyUrl = e.currentTarget.getAttribute('data-url');
-        copyToClipboard(copyUrl);
-      });
-    });
   }
 
-  /**
-   * UI Toast Notification
-   */
-  function showToast(message, type = 'success') {
-    const container = document.getElementById('toastContainer');
-    const toast = document.createElement('div');
-    toast.className = `toast ${type === 'error' ? 'toast-error' : ''}`;
-    
-    const iconClass = type === 'error' ? 'fa-triangle-exclamation' : 'fa-circle-check';
-    toast.innerHTML = `
-      <i class="fa-solid ${iconClass}"></i>
-      <span>${message}</span>
-    `;
+  window.copyHistoryUrl = (shortUrl) => {
+    navigator.clipboard.writeText(shortUrl);
+    alert('복사하였습니다');
+  };
 
-    container.appendChild(toast);
+  clearHistoryBtn.addEventListener('click', () => {
+    localStorage.removeItem(STORAGE_KEY);
+    renderHistory();
+  });
 
-    setTimeout(() => {
-      toast.style.opacity = '0';
-      toast.style.transform = 'translateY(10px)';
-      toast.style.transition = 'all 0.3s ease';
-      setTimeout(() => toast.remove(), 300);
-    }, 2800);
+  // Initial setup
+  renderHistory();
+  updateInputState();
+
+  // Dynamic Mouse Aura Effect
+  let mouseX = window.innerWidth / 2;
+  let mouseY = window.innerHeight / 2;
+  let currentX = mouseX;
+  let currentY = mouseY;
+
+  window.addEventListener('mousemove', (e) => {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+  });
+
+  function animateBg() {
+    currentX += (mouseX - currentX) * 0.05;
+    currentY += (mouseY - currentY) * 0.05;
+
+    const xPct = (currentX / window.innerWidth) * 100;
+    const yPct = (currentY / window.innerHeight) * 100;
+
+    const angle = Math.atan2(currentY - window.innerHeight / 2, currentX - window.innerWidth / 2) * (180 / Math.PI);
+    const hue = (xPct + yPct) * 1.8;
+
+    document.documentElement.style.setProperty('--mouse-x-pct', `${xPct.toFixed(2)}%`);
+    document.documentElement.style.setProperty('--mouse-y-pct', `${yPct.toFixed(2)}%`);
+    document.documentElement.style.setProperty('--mouse-angle', `${angle.toFixed(1)}deg`);
+    document.documentElement.style.setProperty('--hue-deg', `${hue.toFixed(1)}deg`);
+
+    requestAnimationFrame(animateBg);
   }
+
+  animateBg();
 });

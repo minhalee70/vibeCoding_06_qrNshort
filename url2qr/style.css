@@ -149,50 +149,34 @@ html, body {
   z-index: 100;
 }
 
-/* Nav Tabs Navigation */
-.nav-tabs {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  background: rgba(241, 245, 249, 0.85);
-  padding: 0.3rem;
-  border-radius: var(--radius-lg);
-  border: 1px solid rgba(203, 213, 225, 0.6);
-  backdrop-filter: blur(10px);
-}
-
-.nav-tab {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  padding: 0.5rem 1.25rem;
-  font-size: 0.92rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-decoration: none;
-  border-radius: 12px;
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.nav-tab i {
-  font-size: 0.95rem;
-}
-
-.nav-tab:hover {
-  color: var(--primary-glow);
-  background: rgba(255, 255, 255, 0.8);
-}
-
-.nav-tab.active {
-  color: #ffffff;
-  background: linear-gradient(135deg, var(--primary-glow) 0%, var(--secondary-glow) 100%);
-  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
-}
-
 .header-left {
   display: flex;
   align-items: center;
-  gap: 1.2rem;
+  gap: 1rem;
+}
+
+.back-home-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.5rem 0.95rem;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid var(--border-light);
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all 0.25s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+}
+
+.back-home-link:hover {
+  color: var(--primary-glow);
+  border-color: var(--primary-glow);
+  background: #ffffff;
+  transform: translateX(-2px);
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.12);
 }
 
 /* Logo Sizing & Harmonies */

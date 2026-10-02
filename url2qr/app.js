@@ -289,13 +289,4 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }, 3500);
   }
-
-  // Auto-generate QR code if URL parameter is present in Query String
-  const urlParams = new URLSearchParams(window.location.search);
-  const paramUrl = urlParams.get('url');
-  if (paramUrl) {
-    urlInput.value = paramUrl;
-    clearBtn.classList.add('visible');
-    processUrlAndGenerate(paramUrl);
-  }
 });
