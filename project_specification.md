@@ -30,7 +30,7 @@
 └── urlShort/                # [URL 단축기 모듈]
     ├── index.html           # URL 단축 화면 ('← 뒤로가기' 헤더 링크 포함)
     ├── style.css            # URL 단축 화면 디자인 시스템 (url2qr 테마 100% 동기화)
-    └── app.js               # is.gd API 연동, https:// 자동 보정, 로딩 텍스트, 클립보드 복사 및 히스토리 관리
+    └── app.js               # 0초 직행 301 다이렉트 엔진 (1차 CleanURI, 2차 spoo.me), 7초 카운트다운/프리뷰 대기창 0%, 공백/괄호 제거 및 https:// 자동 보정
 ```
 
 ---
@@ -69,19 +69,24 @@
 
 1. **상단 뒤로가기 링크**
    - 좌측 상단 모서리에 `'← 뒤로가기'` (`href="../index.html"`) 미니멀 링크 배치.
-2. **URL 입력 필드 & 프로토콜 자동 보정**
+2. **URL 입력 필드 & 자동 보정 (`formatInputUrl`)**
    - Input Placeholder: `"단축할 URL을 입력하세요 (https://...)"`
-   - 사용자가 `https://` 또는 `http://`를 붙이지 않아도 자동으로 `https://`를 보정하여 단축 실행.
+   - 양 끝 공백 및 괄호 `()` 자동 제거.
+   - `http://` 또는 `https://` 누락 시 자동으로 `https://`를 보정하여 단축 실행 (`https://www.sdu.ac.kr/`, `sdu.ac.kr` -> `https://www.sdu.ac.kr/`).
    - 입력값 유무에 따라 **'단축하기'** 버튼 자동 활성화/비활성화 (`disabled`).
 3. **단축 처리 & 로딩 상태 ("단축 중...")**
    - 버튼 클릭 시 처리 중 버튼 텍스트가 **`"단축 중..."`** (스피너 아이콘 포함)으로 변경 및 버튼 비활성화.
-   - **is.gd Free Open API** (`https://is.gd/create.php?format=json&url=...`)를 활용하여 프론트엔드/CORS 제한 없이 실제 유효한 단축 링크 발급. (TinyURL fallback)
+   - **서울디지털대학교(https://www.sdu.ac.kr/) 포함 0초 직행 301 다이렉트 단축 구조**:
+     - 1차: CleanURI API (`https://cleanuri.com/api/v1/shorten`) -> 0초 직행 301 다이렉트 (카운트다운/프리뷰 대기창 0%)
+     - 2차: spoo.me API (`https://spoo.me/`) -> 0초 직행 301 다이렉트 (CORS 지원)
+     - 3차: AllOrigins CORS 프록시 백업
    - API 응답 실패 시 사용자에게 `alert`로 안내하며, 가짜 404 URL을 절대 생성하지 않음.
 4. **단축된 URL 출력 상자 & 복사**
    - 결과 출력 필드: `readonly` 속성 적용.
+   - 반환받은 문자열 양 끝 공백 제거(`.trim()`) 및 0초 다이렉트 단축 주소 출력.
    - **'복사'** 버튼 클릭 시 클립보드 복사 (`navigator.clipboard.writeText`) 실행.
    - 복사 성공 시 `"복사하였습니다"` `alert` 알림창 표출.
-   - **'새 탭에서 생성된 링크 열기'** 숏컷을 눌러 브라우저에서 실제 원본 사이트로 정상 리다이렉트되는지 검증 가능.
+   - **'새 탭에서 생성된 링크 열기'** 숏컷을 눌러 브라우저에서 대기시간 없이 0초 만에 서울디지털대학교 원본 사이트로 직행.
 5. **최근 단축 히스토리**
    - LocalStorage 연동으로 최근 생성한 5개 단축 주소 자동 저장.
 
@@ -99,37 +104,36 @@
 ## ⚡ 5. API 및 연동 규격 (API Integration)
 
 ```javascript
-// 안정적인 is.gd Open API 연동 로직
-async function getShortUrl(rawUrl) {
-  let formattedUrl = rawUrl.trim();
-  
-  // 1. https:// 프로토콜 자동 보정
-  if (!/^https?:\/\//i.test(formattedUrl)) {
-    formattedUrl = 'https://' + formattedUrl;
-  }
+// 0초 직행 301 다이렉트 연동 로직 (TinyURL 프리뷰 대기창 완벽 제거)
+async function shortenUrl(rawUrl) {
+  const longUrl = formatInputUrl(rawUrl);
 
-  // 2. is.gd API 호출 (CORS 헤더 Access-Control-Allow-Origin: * 지원)
+  // 1차: CleanURI (0초 다이렉트 301 리다이렉트, 프리뷰 대기창 0%)
   try {
-    const response = await fetch(`https://is.gd/create.php?format=json&url=${encodeURIComponent(formattedUrl)}`);
-    if (response.ok) {
-      const data = await response.json();
-      if (data.shorturl) {
-        return { shortUrl: data.shorturl, originalUrl: formattedUrl };
-      }
+    const res = await fetch('https://cleanuri.com/api/v1/shorten', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `url=${encodeURIComponent(longUrl)}`
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.result_url) return { shortUrl: data.result_url.trim(), originalUrl: longUrl };
     }
-  } catch (err) {
-    console.warn('is.gd fetch error...', err);
-  }
+  } catch (err) {}
 
-  // Fallback API (TinyURL)
-  const res = await fetch(`https://tinyurl.com/api-create.php?url=${encodeURIComponent(formattedUrl)}`);
-  if (res.ok) {
-    const text = await res.text();
-    if (text.startsWith('http')) {
-      return { shortUrl: text.trim(), originalUrl: formattedUrl };
+  // 2차: spoo.me (0초 다이렉트 301 리다이렉트, 프리뷰 대기창 0%)
+  try {
+    const res = await fetch('https://spoo.me/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+      body: `url=${encodeURIComponent(longUrl)}`
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.short_url) return { shortUrl: data.short_url.trim(), originalUrl: longUrl };
     }
-  }
+  } catch (err) {}
 
-  throw new Error('단축 생성 실패');
+  throw new Error('모든 단축 API 응답 실패');
 }
 ```

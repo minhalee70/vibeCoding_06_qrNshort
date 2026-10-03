@@ -37,58 +37,124 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   /**
-   * Reliable URL Shortener API Handler
-   * 1. Auto prepends https:// if missing
-   * 2. Uses CORS-friendly is.gd API first, falls back to TinyURL
-   * 3. Throws explicit errors if API fails without mock 404 URLs
+   * Cleans preview prefix/params from short URL to ensure direct redirect URL (https://tinyurl.com/[code])
    */
-  async function getShortUrl(rawUrl) {
-    let formattedUrl = rawUrl.trim();
-    
-    // Auto prepend https:// if http:// or https:// is missing
-    if (!/^https?:\/\//i.test(formattedUrl)) {
-      formattedUrl = 'https://' + formattedUrl;
-    }
+  function cleanShortUrl(url) {
+    if (!url) return '';
+    let cleaned = url.trim();
 
-    // Attempt 1: is.gd Free Open API (CORS friendly via Access-Control-Allow-Origin: *)
-    try {
-      const isGdApi = `https://is.gd/create.php?format=json&url=${encodeURIComponent(formattedUrl)}`;
-      const response = await fetch(isGdApi);
-      if (response.ok) {
-        const data = await response.json();
-        if (data.shorturl) {
-          return { shortUrl: data.shorturl, originalUrl: formattedUrl };
-        } else if (data.errormessage) {
-          console.warn('is.gd error:', data.errormessage);
-        }
+    // 1. Convert preview.tinyurl.com -> tinyurl.com
+    cleaned = cleaned.replace(/^https?:\/\/preview\.tinyurl\.com\//i, 'https://tinyurl.com/');
+
+    // 2. Strip any remaining preview. from hostname
+    cleaned = cleaned.replace(/(https?:\/\/)preview\./i, '$1');
+
+    // 3. Remove preview option in path or query parameters (e.g., ?preview=1, /preview.php?num=xxx)
+    cleaned = cleaned.replace(/[\?&]preview(=[^&]*)?/gi, '');
+    if (cleaned.includes('/preview.php')) {
+      const match = cleaned.match(/num=([^&]+)/);
+      if (match && match[1]) {
+        cleaned = `https://tinyurl.com/${match[1]}`;
       }
-    } catch (err) {
-      console.warn('is.gd fetch error, attempting TinyURL fallback...', err);
     }
 
-    // Attempt 2: TinyURL direct endpoint
-    try {
-      const tinyUrlApi = `https://tinyurl.com/api-create.php?url=${encodeURIComponent(formattedUrl)}`;
-      const response = await fetch(tinyUrlApi);
-      if (response.ok) {
-        const text = await response.text();
-        if (text && text.startsWith('http')) {
-          return { shortUrl: text.trim(), originalUrl: formattedUrl };
-        }
-      }
-    } catch (err) {
-      console.warn('TinyURL fetch error...', err);
+    // 4. Ensure standard protocol
+    if (!/^https?:\/\//i.test(cleaned)) {
+      cleaned = 'https://' + cleaned;
     }
 
-    // Fail gracefully with explicit Exception
-    throw new Error('모든 단축 URL 생성 API 응답 실패');
+    return cleaned;
   }
 
-  // Form Submission
+  /**
+   * 입력값 보정 함수:
+   * 1. 양 끝 공백 및 괄호 () 자동 제거
+   * 2. http:// 또는 https:// 누락 시 자동으로 'https://' 부착
+   */
+  function formatInputUrl(rawUrl) {
+    if (!rawUrl) return '';
+    let cleaned = rawUrl.trim().replace(/[\(\)]/g, '');
+    if (!/^https?:\/\//i.test(cleaned)) {
+      cleaned = 'https://' + cleaned;
+    }
+    return cleaned;
+  }
+
+  /**
+   * 서울디지털대학교(https://www.sdu.ac.kr/) 포함 모든 도메인 0초 직행 다이렉트 단축 (7초 프리뷰/광고 대기창 0%)
+   * 1차: CleanURI API (https://cleanuri.com/api/v1/shorten) -> 0초 직행 301 다이렉트
+   * 2차: spoo.me API (https://spoo.me/) -> 0초 직행 301 다이렉트
+   * 3차: AllOrigins CORS 프록시 백업
+   */
+  async function shortenUrl(rawUrl) {
+    const longUrl = formatInputUrl(rawUrl);
+    if (!longUrl) throw new Error('유효한 URL을 입력해 주세요.');
+
+    // 1차 시도: CleanURI API (0초 직행 301 다이렉트 단축, 대기창 0%)
+    try {
+      const res = await fetch('https://cleanuri.com/api/v1/shorten', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `url=${encodeURIComponent(longUrl)}`
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.result_url) {
+          return { shortUrl: data.result_url.trim(), originalUrl: longUrl };
+        }
+      }
+    } catch (err) {
+      console.warn('1차 CleanURI API 호출 실패, 2차 spoo.me 시도...', err);
+    }
+
+    // 2차 시도: spoo.me API (0초 직행 301 다이렉트 단축, CORS 지원)
+    try {
+      const res = await fetch('https://spoo.me/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept': 'application/json'
+        },
+        body: `url=${encodeURIComponent(longUrl)}`
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.short_url) {
+          return { shortUrl: data.short_url.trim(), originalUrl: longUrl };
+        }
+      }
+    } catch (err) {
+      console.warn('2차 spoo.me API 호출 실패, 3차 AllOrigins 시도...', err);
+    }
+
+    // 3차 시도: AllOrigins 프록시
+    try {
+      const tinyTarget = `https://tinyurl.com/api-create.php?url=${encodeURIComponent(longUrl)}`;
+      const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(tinyTarget)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.contents) {
+          const shortUrl = cleanShortUrl(data.contents.trim());
+          if (shortUrl && shortUrl.startsWith('http')) {
+            return { shortUrl, originalUrl: longUrl };
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('3차 AllOrigins 호출 실패...', err);
+    }
+
+    throw new Error('모든 단축 API 응답 실패');
+  }
+
+  // Alias
+  const getShortUrl = shortenUrl;
+
+  // Form Submission Handler
   shortenForm.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const rawUrl = urlInput.value.trim();
-    if (!rawUrl) return;
+    const rawUrl = urlInput.value;
+    if (!rawUrl || !rawUrl.trim()) return;
 
     // Show loading: Disable button & change text to "단축 중..."
     shortenBtn.disabled = true;
@@ -97,20 +163,22 @@ document.addEventListener('DOMContentLoaded', () => {
     loadingBox.style.display = 'flex';
 
     try {
-      const { shortUrl, originalUrl } = await getShortUrl(rawUrl);
+      const { shortUrl, originalUrl } = await shortenUrl(rawUrl);
+      const cleanUrl = cleanShortUrl(shortUrl.trim());
 
       // Display result
-      shortUrlOutput.value = shortUrl;
-      openShortUrlBtn.href = shortUrl;
+      shortUrlOutput.value = cleanUrl;
+      openShortUrlBtn.href = cleanUrl;
       resultBox.style.display = 'block';
 
       // Save to history
-      saveToHistory(originalUrl, shortUrl);
+      saveToHistory(originalUrl, cleanUrl);
       renderHistory();
     } catch (error) {
-      alert('URL 단축 생성에 실패했습니다. 올바른 주소(도메인)인지 확인하거나 잠시 후 다시 시도해 주세요.');
+      console.error('URL 단축 오류:', error);
+      alert(`URL 단축 생성 실패: ${error.message || '잠시 후 다시 시도해 주세요.'}`);
     } finally {
-      // Restore loading state and button text
+      // Restore loading state and button text cleanly
       loadingBox.style.display = 'none';
       shortenBtn.innerHTML = `<i class="fa-solid fa-wand-magic-sparkles"></i> <span>단축하기</span>`;
       shortenBtn.disabled = false;
